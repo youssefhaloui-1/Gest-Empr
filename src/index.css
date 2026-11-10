@@ -1,0 +1,78 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background: #0a0d14;
+  overflow-x: hidden;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button:focus-visible,
+input:focus-visible,
+[role="button"]:focus-visible {
+  outline: 2px solid #a5b4fc;
+  outline-offset: 3px;
+}
+
+@media (max-width: 640px) {
+  .font-display {
+    letter-spacing: -0.03em;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.theme-light {
+  color: #172033;
+}
+
+.theme-light .text-white {
+  color: #172033 !important;
+}
+
+.theme-light [class*="text-white/"] {
+  color: rgba(23, 32, 51, 0.68) !important;
+}
+
+.theme-light [class*="border-white/"] {
+  border-color: rgba(23, 32, 51, 0.14) !important;
+}
+
+.theme-light [class*="bg-white/"] {
+  background-color: rgba(23, 32, 51, 0.06) !important;
+}
+input,
+select {
+  min-width: 0;
+}
+
+button,
+select {
+  touch-action: manipulation;
+}
