@@ -83,7 +83,9 @@ export function AddBookModal({
     // Reset fields
     setTitle("");
     setAuthor("");
+    setIsbn("");
     setSummary("");
+    setTotal("3");
     setSubmitted(false);
   };
 

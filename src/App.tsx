@@ -67,6 +67,25 @@ export default function App() {
   useEffect(() => {
     writeStorage(STORAGE_KEYS.books, books);
   }, [books]);
+
+  // Synchronisation dynamique cross-tab / LocalStorage
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === STORAGE_KEYS.books && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          if (Array.isArray(parsed) && parsed.length >= 40) {
+            setBooks(validBooks(parsed));
+          }
+        } catch {
+          // ignore parsing error
+        }
+      }
+    };
+    window.addEventListener("storage", handleStorageChange);
+    return () => window.removeEventListener("storage", handleStorageChange);
+  }, []);
+
   useEffect(() => writeStorage(STORAGE_KEYS.loans, loans), [loans]);
   useEffect(() => writeStorage(STORAGE_KEYS.reservations, reservations), [reservations]);
   useEffect(() => writeStorage(STORAGE_KEYS.returnHistory, returnHistory), [returnHistory]);

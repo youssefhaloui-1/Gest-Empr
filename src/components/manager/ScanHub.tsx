@@ -12,6 +12,10 @@ import {
   MapPin,
   Volume2,
   RefreshCw,
+  Upload,
+  Image as ImageIcon,
+  Keyboard,
+  Sparkles,
 } from "lucide-react";
 import { Book, Loan } from "../../types/library";
 import { Glass, GlowBadge } from "../ui/primitives";
@@ -39,6 +43,8 @@ function playScannerBeep() {
   }
 }
 
+type ScanMode = "camera" | "manual" | "file";
+
 export function ScanHub({
   books,
   loans,
@@ -52,18 +58,29 @@ export function ScanHub({
   onAddCopies: (bookId: string, quantity: number) => void;
   onOpenNewBookModal: (scannedIsbn: string) => void;
 }) {
+  const [scanMode, setScanMode] = useState<ScanMode>("manual");
   const [barcodeInput, setBarcodeInput] = useState("");
   const [lastScannedCode, setLastScannedCode] = useState<string | null>(null);
   const [matchedBook, setMatchedBook] = useState<Book | null>(null);
   const [matchedLoan, setMatchedLoan] = useState<Loan | null>(null);
+
+  // Camera states
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [isCameraLoading, setIsCameraLoading] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+
+  // File upload state
+  const [uploadedImagePreview, setUploadedImagePreview] = useState<string | null>(null);
+  const [isDecodingImage, setIsDecodingImage] = useState(false);
+  const [imageDecodeNotice, setImageDecodeNotice] = useState<string | null>(null);
+
+  // Restock success notification
   const [restockSuccess, setRestockSuccess] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Process barcode lookup
   const processScan = useCallback(
@@ -120,7 +137,7 @@ export function ScanHub({
     setIsCameraLoading(false);
   }, []);
 
-  // Start Camera with standard Web getUserMedia API
+  // Start Camera with standard Web getUserMedia API and robust iframe/HTTPS fallback
   const startCamera = async () => {
     setCameraError(null);
     setIsCameraLoading(true);
@@ -128,7 +145,7 @@ export function ScanHub({
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error(
-          "L'accès à la caméra n'est pas pris en charge par votre navigateur ou ce contexte (requiert HTTPS ou localhost)."
+          "L'API caméra n'est pas accessible dans cet environnement (restriction de sécurité iframe ou contexte non sécurisé)."
         );
       }
 
@@ -145,7 +162,7 @@ export function ScanHub({
           audio: false,
         });
       } catch (err) {
-        console.warn("Attempt with facingMode: environment failed, trying standard video...", err);
+        console.warn("facingMode environment failed, trying generic video...", err);
         // 2. Fallback attempt with any available camera (laptop webcam, default camera)
         stream = await navigator.mediaDevices.getUserMedia({
           video: true,
@@ -170,26 +187,32 @@ export function ScanHub({
       }
 
       setIsCameraActive(true);
+      setScanMode("camera");
     } catch (err: unknown) {
       console.error("Camera access error:", err);
       const errorObj = err as { name?: string; message?: string };
+      let friendlyMessage =
+        "L'accès direct à la caméra est restreint par la politique de sécurité iframe du navigateur.";
+
       if (errorObj?.name === "NotAllowedError" || errorObj?.name === "PermissionDeniedError") {
-        setCameraError(
-          "Accès à la caméra refusé. Veuillez autoriser l'accès à la webcam dans les paramètres de votre navigateur."
-        );
+        friendlyMessage =
+          "Autorisation caméra non accordée ou bloquée par l'environnement iframe. Basculement automatique vers la saisie manuelle et l'import photo.";
       } else if (errorObj?.name === "NotFoundError" || errorObj?.name === "DevicesNotFoundError") {
-        setCameraError(
-          "Aucune caméra ou webcam détectée sur cet appareil. Utilisez la saisie ou la simulation rapide."
-        );
-      } else if (errorObj?.name === "NotReadableError" || errorObj?.name === "TrackStartError") {
-        setCameraError("La caméra est déjà sollicitée par une autre application.");
-      } else {
-        setCameraError(
-          errorObj?.message ||
-            "Impossible d'activer la caméra vidéo. Vérifiez les autorisations de votre navigateur."
-        );
+        friendlyMessage =
+          "Aucune caméra physique détectée. Basculement vers l'interface de saisie manuelle.";
+      } else if (errorObj?.name === "SecurityError") {
+        friendlyMessage =
+          "Restriction HTTPS/iframe active sur la caméra. Mode alternatif activé automatiquement.";
       }
+
+      setCameraError(friendlyMessage);
       stopCamera();
+
+      // AUTOMATIC FALLBACK: Switch to manual/USB scanner mode immediately
+      setScanMode("manual");
+      setTimeout(() => {
+        inputRef.current?.focus();
+      }, 100);
     } finally {
       setIsCameraLoading(false);
     }
@@ -198,6 +221,7 @@ export function ScanHub({
   const toggleCamera = () => {
     if (isCameraActive || isCameraLoading) {
       stopCamera();
+      setScanMode("manual");
     } else {
       startCamera();
     }
@@ -219,7 +243,9 @@ export function ScanHub({
     let isScanning = true;
     try {
       type Detector = { detect: (src: HTMLVideoElement) => Promise<Array<{ rawValue: string }>> };
-      const DetectorClass = (window as unknown as { BarcodeDetector: new (opts: { formats: string[] }) => Detector }).BarcodeDetector;
+      const DetectorClass = (
+        window as unknown as { BarcodeDetector: new (opts: { formats: string[] }) => Detector }
+      ).BarcodeDetector;
       const detector = new DetectorClass({
         formats: ["ean_13", "ean_8", "code_128", "code_39", "qr_code", "upc_a"],
       });
@@ -248,6 +274,51 @@ export function ScanHub({
     }
   }, [isCameraActive, lastScannedCode, processScan]);
 
+  // Handle Photo / Image File Upload
+  const handleImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setImageDecodeNotice(null);
+    setIsDecodingImage(true);
+
+    const imageUrl = URL.createObjectURL(file);
+    setUploadedImagePreview(imageUrl);
+    setScanMode("file");
+
+    // Attempt decoding with BarcodeDetector
+    try {
+      if (typeof window !== "undefined" && "BarcodeDetector" in window) {
+        type Detector = { detect: (src: ImageBitmap) => Promise<Array<{ rawValue: string }>> };
+        const DetectorClass = (
+          window as unknown as { BarcodeDetector: new (opts: { formats: string[] }) => Detector }
+        ).BarcodeDetector;
+        const detector = new DetectorClass({
+          formats: ["ean_13", "ean_8", "code_128", "code_39", "qr_code", "upc_a"],
+        });
+
+        const imageBitmap = await createImageBitmap(file);
+        const results = await detector.detect(imageBitmap);
+
+        if (results && results.length > 0) {
+          const detected = results[0].rawValue;
+          setImageDecodeNotice(`Code-barres détecté avec succès : ${detected}`);
+          processScan(detected);
+          setIsDecodingImage(false);
+          return;
+        }
+      }
+    } catch (detectErr) {
+      console.warn("Image barcode detection error:", detectErr);
+    }
+
+    // Fallback if BarcodeDetector didn't find or is unsupported
+    setIsDecodingImage(false);
+    setImageDecodeNotice(
+      "Image chargée ! Si le navigateur ne détecte pas le code automatiquement, vous pouvez confirmer le code ISBN ci-dessous."
+    );
+  };
+
   const handleScanSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (barcodeInput.trim()) {
@@ -266,52 +337,94 @@ export function ScanHub({
 
   // Demo barcodes for quick test
   const demoBarcodes = [
-    { label: "Algorithms (MIT)", code: "978-0262046305", id: "LIV-1001" },
-    { label: "Clean Code", code: "978-0132350884", id: "LIV-1020" },
-    { label: "Mécanique quantique", code: "978-2759810804", id: "LIV-1002" },
-    { label: "Nouveau livre (inconnu)", code: "978-2100999888", id: "NEW-BARCODE" },
+    { label: "Algorithms (MIT)", code: "978-0262046305" },
+    { label: "Clean Code", code: "978-0132350884" },
+    { label: "Mécanique quantique", code: "978-2759810804" },
+    { label: "IA Moderne (Russell)", code: "978-0136042594" },
+    { label: "Nouveau livre (inconnu)", code: "978-2100999888" },
   ];
 
   return (
     <Glass className="p-5 sm:p-6" glow="rgba(34,211,238,.4)">
       {/* Header */}
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-3">
         <div className="flex items-center gap-2">
           <ScanLine size={20} className="text-cyan-300" />
           <h3 className="font-display text-xl">Lecteur de code-barres</h3>
         </div>
-        <button
-          type="button"
-          onClick={toggleCamera}
-          disabled={isCameraLoading}
-          className={`flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-medium transition ${
-            isCameraActive
-              ? "border-emerald-400/50 bg-emerald-500/20 text-emerald-200 shadow-[0_0_15px_rgba(52,211,153,.3)]"
-              : "border-cyan-400/30 bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20 hover:border-cyan-400/60"
-          }`}
-        >
-          {isCameraLoading ? (
-            <>
-              <RefreshCw size={14} className="animate-spin text-cyan-300" />
-              <span>Connexion…</span>
-            </>
-          ) : isCameraActive ? (
-            <>
-              <CameraOff size={14} className="text-emerald-300" />
-              <span>Arrêter la caméra</span>
-            </>
-          ) : (
-            <>
-              <Camera size={14} className="text-cyan-300" />
-              <span>Caméra vidéo</span>
-            </>
-          )}
-        </button>
+
+        {/* Scan Mode Switcher */}
+        <div className="flex items-center rounded-xl bg-black/50 p-1 border border-white/10 text-xs">
+          <button
+            type="button"
+            onClick={toggleCamera}
+            disabled={isCameraLoading}
+            className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 transition font-medium ${
+              isCameraActive
+                ? "bg-emerald-500/30 text-emerald-200 border border-emerald-400/50"
+                : "text-white/60 hover:text-white"
+            }`}
+          >
+            {isCameraLoading ? (
+              <RefreshCw size={13} className="animate-spin text-cyan-300" />
+            ) : isCameraActive ? (
+              <CameraOff size={13} className="text-emerald-300" />
+            ) : (
+              <Camera size={13} className="text-cyan-300" />
+            )}
+            <span>{isCameraActive ? "Caméra ON" : "Caméra"}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              stopCamera();
+              setScanMode("manual");
+              setTimeout(() => inputRef.current?.focus(), 50);
+            }}
+            className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 transition font-medium ${
+              scanMode === "manual" && !isCameraActive
+                ? "bg-cyan-500/25 text-cyan-200 border border-cyan-400/40"
+                : "text-white/60 hover:text-white"
+            }`}
+          >
+            <Keyboard size={13} />
+            <span>Saisie / USB</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              stopCamera();
+              setScanMode("file");
+              fileInputRef.current?.click();
+            }}
+            className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 transition font-medium ${
+              scanMode === "file"
+                ? "bg-indigo-500/30 text-indigo-200 border border-indigo-400/40"
+                : "text-white/60 hover:text-white"
+            }`}
+          >
+            <Upload size={13} />
+            <span>Importer photo</span>
+          </button>
+        </div>
       </div>
 
-      {/* Holographic / Video Viewfinder */}
+      {/* Hidden File Input for Image Scanning with environment capture */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        onChange={handleImageFileChange}
+        className="hidden"
+        aria-label="Importer une photo du code-barres"
+      />
+
+      {/* Holographic / Video / Photo Viewfinder */}
       <div className="relative mb-3.5 grid h-48 place-items-center overflow-hidden rounded-2xl border border-cyan-300/30 bg-black/80 shadow-inner">
-        {/* The video element is ALWAYS mounted in DOM so videoRef is never null */}
+        {/* The video element is ALWAYS mounted in DOM */}
         <video
           ref={videoRef}
           autoPlay
@@ -321,6 +434,17 @@ export function ScanHub({
             isCameraActive ? "opacity-100 z-0" : "opacity-0 pointer-events-none -z-10"
           }`}
         />
+
+        {/* Uploaded Image Preview if in file mode */}
+        {scanMode === "file" && uploadedImagePreview && !isCameraActive && (
+          <div className="absolute inset-0 z-0 flex items-center justify-center bg-black/90">
+            <img
+              src={uploadedImagePreview}
+              alt="Photo de code-barres importée"
+              className="max-h-full max-w-full object-contain opacity-80"
+            />
+          </div>
+        )}
 
         {/* Viewfinder Target Corner Reticles */}
         {[
@@ -340,7 +464,7 @@ export function ScanHub({
         />
 
         {/* Central HUD Status */}
-        <div className="z-10 bg-black/75 px-3.5 py-1.5 rounded-full border border-cyan-400/40 flex items-center gap-2 backdrop-blur-md">
+        <div className="z-10 bg-black/80 px-3.5 py-1.5 rounded-full border border-cyan-400/40 flex items-center gap-2 backdrop-blur-md">
           {isCameraActive ? (
             <>
               <span className="relative flex h-2.5 w-2.5">
@@ -351,38 +475,81 @@ export function ScanHub({
                 Flux caméra direct · Placez le code-barres
               </span>
             </>
+          ) : scanMode === "file" && uploadedImagePreview ? (
+            <>
+              <ImageIcon size={14} className="text-indigo-300" />
+              <span className="text-[11px] text-indigo-200 font-medium">
+                {isDecodingImage ? "Analyse de la photo en cours…" : "Photo chargée pour analyse"}
+              </span>
+            </>
           ) : (
             <>
               <Barcode size={14} className="text-cyan-300" />
-              <span className="text-[11px] text-cyan-200/90">
-                Douchette laser USB connectée ou saisie directe
+              <span className="text-[11px] text-cyan-200/90 font-medium">
+                Mode alternatif actif · Douchette USB & Simulation
               </span>
             </>
           )}
         </div>
       </div>
 
-      {/* Clear error alert if camera access is refused or fails */}
+      {/* Clear error alert & automatic fallback message */}
       <AnimatePresence>
         {cameraError && (
           <motion.div
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: "auto" }}
             exit={{ opacity: 0, height: 0 }}
-            className="mb-3.5 rounded-xl border border-rose-400/40 bg-rose-500/15 p-3 text-xs text-rose-200 flex items-start gap-2.5"
+            className="mb-3.5 rounded-xl border border-amber-400/40 bg-amber-500/15 p-3 text-xs text-amber-200 flex items-start gap-2.5"
           >
-            <AlertCircle size={16} className="text-rose-400 shrink-0 mt-0.5" />
+            <AlertCircle size={16} className="text-amber-400 shrink-0 mt-0.5" />
             <div className="flex-1">
-              <p className="font-semibold text-rose-100">Caméra non disponible</p>
-              <p className="mt-0.5 text-rose-200/90">{cameraError}</p>
-              <button
-                type="button"
-                onClick={startCamera}
-                className="mt-2 inline-flex items-center gap-1 rounded-lg bg-rose-500/20 px-2.5 py-1 text-[11px] text-rose-200 border border-rose-400/40 hover:bg-rose-500/30 transition"
-              >
-                <RefreshCw size={11} /> Réessayer l'accès caméra
-              </button>
+              <p className="font-semibold text-amber-100">Basculement automatique au Scanner manuel</p>
+              <p className="mt-0.5 text-amber-200/90">{cameraError}</p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="inline-flex items-center gap-1 rounded-lg bg-indigo-500/25 px-2.5 py-1 text-[11px] text-indigo-200 border border-indigo-400/40 hover:bg-indigo-500/35 transition"
+                >
+                  <Upload size={12} /> Importer une photo de code-barres
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCameraError(null);
+                    startCamera();
+                  }}
+                  className="inline-flex items-center gap-1 rounded-lg bg-white/5 px-2 py-1 text-[11px] text-white/60 hover:text-white transition"
+                >
+                  <RefreshCw size={11} /> Réessayer la caméra
+                </button>
+              </div>
             </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Image Decode Notification Banner */}
+      <AnimatePresence>
+        {imageDecodeNotice && (
+          <motion.div
+            initial={{ opacity: 0, y: -6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            className="mb-3.5 rounded-xl border border-indigo-400/30 bg-indigo-500/20 p-2.5 text-xs text-indigo-200 flex items-center justify-between gap-2"
+          >
+            <div className="flex items-center gap-2">
+              <Sparkles size={14} className="text-indigo-300 shrink-0" />
+              <span>{imageDecodeNotice}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="text-[11px] underline text-indigo-300 hover:text-white shrink-0"
+            >
+              Changer de photo
+            </button>
           </motion.div>
         )}
       </AnimatePresence>
@@ -395,7 +562,7 @@ export function ScanHub({
             ref={inputRef}
             value={barcodeInput}
             onChange={(e) => setBarcodeInput(e.target.value)}
-            placeholder="Scannez ou tapez l'ISBN (ex: 978-0262046305)…"
+            placeholder="Scannez avec la douchette ou tapez l'ISBN (ex: 978-0262046305)…"
             aria-label="Code-barres à scanner"
             className="w-full bg-transparent text-sm font-mono text-white outline-none placeholder:text-white/30"
           />
@@ -403,16 +570,32 @@ export function ScanHub({
             type="submit"
             className="rounded-xl bg-cyan-400/20 px-3 py-1.5 text-xs font-medium text-cyan-200 hover:bg-cyan-400/30 transition shrink-0"
           >
-            Valider
+            Rechercher
           </button>
         </div>
       </form>
 
-      {/* Quick Test Barcodes */}
-      <div className="mt-3">
-        <p className="text-[11px] text-white/45 mb-1.5 flex items-center gap-1">
+      {/* Photo Import Action Card */}
+      <div className="mt-3 flex items-center justify-between rounded-xl border border-dashed border-white/15 bg-white/[0.02] p-2.5 text-xs">
+        <div className="flex items-center gap-2 text-white/70">
+          <Upload size={14} className="text-indigo-400 shrink-0" />
+          <span>Scanner via photo :</span>
+        </div>
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          className="flex items-center gap-1.5 rounded-lg bg-indigo-500/20 px-3 py-1 text-xs font-medium text-indigo-200 border border-indigo-400/30 hover:bg-indigo-500/30 transition"
+        >
+          <Camera size={13} />
+          <span>Prendre ou importer une photo</span>
+        </button>
+      </div>
+
+      {/* Quick Test Barcodes Simulation Buttons */}
+      <div className="mt-3 pt-2.5 border-t border-white/10">
+        <p className="text-[11px] text-white/50 mb-1.5 flex items-center gap-1">
           <Volume2 size={12} className="text-cyan-400" />
-          Simulation de scan rapide au laser :
+          Boutons de simulation rapide au laser :
         </p>
         <div className="flex flex-wrap gap-1.5">
           {demoBarcodes.map((item) => (
@@ -456,7 +639,9 @@ export function ScanHub({
                   Code reconnu : {matchedBook.isbn}
                 </span>
                 <h4 className="font-display text-base text-white">{matchedBook.title}</h4>
-                <p className="text-xs text-white/60">{matchedBook.author} · {matchedBook.field}</p>
+                <p className="text-xs text-white/60">
+                  {matchedBook.author} · {matchedBook.field}
+                </p>
               </div>
               <GlowBadge
                 level={matchedBook.stock > 0 ? "ok" : "yellow"}
