@@ -1,6 +1,7 @@
 export const STORAGE_KEYS = {
   authEmail: "athenaeum.authEmail",
   authRole: "athenaeum.authRole",
+  authMode: "athenaeum.authMode",
   rememberSession: "athenaeum.rememberSession",
   books: "athenaeum.books",
   loans: "athenaeum.loans",
@@ -10,6 +11,7 @@ export const STORAGE_KEYS = {
 } as const;
 
 export type UserRole = "manager" | "consultant";
+export type AuthMode = "email" | "demo";
 
 export function readStorage<T>(key: string, fallback: T): T {
   return readFrom(localStorage, key, fallback);
@@ -47,19 +49,3 @@ function writeTo<T>(storage: Storage, key: string, value: T): void {
   }
 }
 
-export function clearLibraryData(): void {
-  [
-    STORAGE_KEYS.authEmail,
-    STORAGE_KEYS.authRole,
-    STORAGE_KEYS.rememberSession,
-    STORAGE_KEYS.books,
-    STORAGE_KEYS.loans,
-    STORAGE_KEYS.reservations,
-    STORAGE_KEYS.favorites,
-    STORAGE_KEYS.returnHistory,
-  ].forEach((key) => localStorage.removeItem(key));
-  [
-    STORAGE_KEYS.authEmail,
-    STORAGE_KEYS.authRole,
-  ].forEach((key) => sessionStorage.removeItem(key));
-}

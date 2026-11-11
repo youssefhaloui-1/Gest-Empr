@@ -4,7 +4,37 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="L'Atelier des Savoirs, le catalogue et l'espace de prêt de votre bibliothèque universitaire." />
+    <meta property="og:title" content="L'Atelier des Savoirs · Bibliothèque universitaire" />
+    <meta property="og:description" content="L'Atelier des Savoirs, le catalogue et l'espace de prêt de votre bibliothèque universitaire." />
     <meta name="theme-color" content="#0A0D14" />
+    <script>
+      (function() {
+        try {
+          var originalFetch = window.fetch ? window.fetch.bind(window) : null;
+          var _currentFetch = originalFetch;
+          Object.defineProperty(window, "fetch", {
+            configurable: true,
+            enumerable: true,
+            get: function() {
+              return _currentFetch;
+            },
+            set: function(fn) {
+              _currentFetch = fn;
+            }
+          });
+        } catch (e) {
+          /* ignore */
+        }
+        window.addEventListener("error", function(event) {
+          if (event && event.filename && event.filename.indexOf("chrome-extension://") === 0) {
+            event.preventDefault();
+            if (typeof event.stopImmediatePropagation === "function") {
+              event.stopImmediatePropagation();
+            }
+          }
+        }, true);
+      })();
+    </script>
     <title>L'Atelier des Savoirs · Bibliothèque universitaire</title>
   </head>
   <body>

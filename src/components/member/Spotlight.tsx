@@ -18,9 +18,9 @@ export function Spotlight({
   const [q, setQ] = useState("");
   const res = books
     .filter((b) =>
-      (b.title + b.author + b.field + b.id).toLowerCase().includes(q.toLowerCase())
+      (b.title + b.author + b.field + b.id + b.isbn + b.shelf).toLowerCase().includes(q.toLowerCase())
     )
-    .slice(0, 5);
+    .slice(0, 6);
 
   return (
     <AnimatePresence>
@@ -72,7 +72,7 @@ export function Spotlight({
                       </span>
                       <GlowBadge
                         level={b.stock > 0 ? "ok" : "yellow"}
-                        text={b.stock > 0 ? "Disponible" : "Réservé"}
+                        text={b.stock > 0 ? `En rayon (${b.stock}/${b.total})` : "Emprunté"}
                       />
                     </button>
                   </li>
